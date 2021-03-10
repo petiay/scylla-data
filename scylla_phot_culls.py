@@ -9,11 +9,12 @@ import time
 import numpy as np
 from astropy.table import Table
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from scipy.stats import gaussian_kde
 plt.ion()
 
 
-def make_cuts(catalog_in='data/smc_6-15891_SMC-3956ne-9632/proc_default/15891_SMC-3956ne-9632.st.fits',
+def make_cuts(catalog_in,
               catalog_out=None,
               filters=['F475W', 'F814W'],
               crowdcut=[0.3],
@@ -74,7 +75,6 @@ def make_cuts(catalog_in='data/smc_6-15891_SMC-3956ne-9632/proc_default/15891_SM
     os.system("cp " + catalog_in + " " + catalog_out)
 
     t = Table.read(catalog_out)
-    start_time_cull = time.time()
 
     # Set the following entries outside the desired cut range to 99.999, or 99 ('FLAG')
     # VEGA, STD, ERR, CHI, SNR, SHARP, ROUND, CROWD, FLAG
@@ -99,58 +99,96 @@ def make_cuts(catalog_in='data/smc_6-15891_SMC-3956ne-9632/proc_default/15891_SM
         t[filters[i] + '_FLAG'][inds_to_cut] = 99
 
     t.write(catalog_out, overwrite=True)
-    print('Done culling in %.2f sec.' % round((time.time()-start_time_cull), 2))
-    print('New catalog:' % catalog_out)
+    print('New catalog: \'%s\'' % catalog_out)
 
     if plot:
 
         inds_noncut = np.where((t[filters[0] + '_FLAG'] < 99) & (t[filters[1] + '_FLAG'] < 99))[0]
+        inds_cut = np.where((t[filters[0] + '_FLAG'] >= 99) | (t[filters[1] + '_FLAG'] >= 99))[0]
         ra = t['RA'][inds_noncut]
         dec = t['DEC'][inds_noncut]
+
+        # read in original catalog
+        t_st = Table.read(catalog_in)
+        ra_st = t_st['RA']
+        dec_st = t_st['DEC']
 
         if errcut:
             errcutstr = '_errcut'
         else:
             errcutstr = ''
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9.9, 4.5))
-        fig.suptitle('Scylla %s%s (vgst catalog)' % (field_id, errcutstr))
-        ax1.plot(ra, dec, ',', ls='', label='N = %s' % len(ra))
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharey='row', figsize=(8, 7))
+        fig.suptitle('Scylla %s%s (vgst catalog cuts)' % (field_id, errcutstr))
+
+        # spatial plot of original st catalog
+        ax1.plot(ra_st, dec_st, ',', ls='')
         ax1.set_xlabel('RA', fontsize=15)
         ax1.set_ylabel('DEC', fontsize=15)
-        ax1.legend(loc='upper right')
+        ax1.legend(handles=[Line2D([0], [0], color='#126D94', marker='o', markersize=3, ls='',
+                                   label='st catalog, N = %s' % len(ra_st))],
+                   loc='upper right', fontsize='small')
 
-        # only plot CMDs if multiple filters are provided
+        # spatial plot of the culled vgst catalog
+        ax2.plot(ra, dec, ',', ls='')
+        ax2.set_xlabel('RA', fontsize=15)
+        ax2.legend(handles=[Line2D([0], [0], color='#126D94', marker='o', markersize=3, ls='',
+                                   label='vgst catalog, N = %s' % len(ra))],
+                   loc='upper right', fontsize='small')
+
         if len(filters) > 1:
-            inds_non99 = np.where((t[filters[0] + '_VEGA'] < 99) & (t[filters[1] + '_VEGA'] < 99))[0]
-            inds_cmd = np.intersect1d(inds_noncut, inds_non99)
+            inds_vega_non99 = np.where((t[filters[0] + '_VEGA'] < 99) & (t[filters[1] + '_VEGA'] < 99))[0]
+            inds_cmd = np.intersect1d(inds_noncut, inds_vega_non99)
             mag1 = t[filters[0] + '_VEGA'][inds_cmd]
             mag2 = t[filters[1] + '_VEGA'][inds_cmd]
 
-            # Set up CMD Kernel Density Estimation (KDE) scatter plot to see the density of sources
-            print('Setting up KDE scatter plot...')
+            mag1_cut = t_st[filters[0] + '_VEGA'][inds_cut]
+            mag2_cut = t_st[filters[1] + '_VEGA'][inds_cut]
+
+            # Set up CMD Kernel Density Estimation (KDE) scatter plot to see the density of removed sources
+            print('Setting up KDE scatter plot for bad (removed) sources...')
+            start_time_kde = time.time()
+            xy_cut = np.vstack([(mag1_cut-mag2_cut), mag1_cut])
+            z_cut = gaussian_kde(xy_cut)(xy_cut)
+            idx_cut = z_cut.argsort()
+            x_cut, y_cut, z_cut = (mag1_cut-mag2_cut)[idx_cut], mag1_cut[idx_cut], z_cut[idx_cut]
+            print('Scatter plot set up in %.2f sec.' % round((time.time() - start_time_kde), 2))
+
+            # CMD of sources removed from the st catalog
+            ax3.scatter(x_cut, y_cut, c=z_cut, s=3, cmap='RdPu_r')
+            ax3.set_xlabel('%s - %s' % (filters[0], filters[1]), fontsize=15)
+            ax3.set_ylabel('%s' % filters[0], fontsize=15)
+            ax3.set_xlim(-6, 8)
+            ax3.set_ylim(32.5, min(mag1_cut)-1.5)
+            ax3.legend(handles=[Line2D([0], [0], color='#A91864', marker='o', markersize=3, ls='',
+                                       label='Removed, N = %s' % len(mag1_cut))],
+                       loc='upper right', fontsize='small')
+
+            # Set up KDE for remaining oved sources
+            print('Setting up KDE scatter plot for good (kept) sources...')
             start_time_kde = time.time()
             xy = np.vstack([(mag1-mag2), mag1])
             z = gaussian_kde(xy)(xy)
             idx = z.argsort()
             x, y, z = (mag1-mag2)[idx], mag1[idx], z[idx]
-            print('Scatter plot set up in %.2f sec.' % round((time.time()-start_time_kde), 2))
-            ax2.scatter(x, y, c=z, s=3, cmap='GnBu_r', label='N = %s' % len(mag1))
+            print('Scatter plot set up in %.2f sec.' % round((time.time() - start_time_kde), 2))
 
-            ax2.set_xlabel('%s - %s' % (filters[0], filters[1]), fontsize=15)
-            ax2.set_ylabel('%s' % filters[0], fontsize=15)
-            ax2.set_xlim(-2, 5)
-            ax2.set_ylim(32.5, min(mag1)-0.5)
-            ax2.legend(loc='upper right')
+            # CMD of sources remaining in the vgst catalog
+            ax4.scatter(x, y, c=z, s=3, cmap='GnBu_r')
+            ax4.set_xlabel('%s - %s' % (filters[0], filters[1]), fontsize=15)
+            ax4.set_xlim(-6, 8)
+            ax4.set_ylim(32.5, min(mag1)-1.5)
+            ax4.legend(handles=[Line2D([0], [0], color='#35C0D6', marker='o', markersize=3, ls='',
+                                       label='Kept (vgst), N = %s' % len(mag1))],
+                       loc='upper right', fontsize='small')
 
-        plt.savefig('scylla-%s%s.png' % (field_id, errcutstr))
-        print('Plot saved as scylla-%s%s.png' % (field_id, errcutstr))
+        plt.savefig(catalog_out.replace('vgst.fits', '%spng' % errcutstr))
+        print('Plot saved as \'%s\'' % catalog_out.replace("vgst.fits", "%spng" % errcutstr))
         plt.close()
 
 
 if __name__ == "__main__":
 
-    # commandline parser
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "catalog_in", type=str, help="File name of the input catalog",

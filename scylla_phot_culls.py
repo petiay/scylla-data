@@ -156,19 +156,14 @@ def make_cuts(catalog_in,
         mag1_cut = t_st[filters[0] + '_VEGA'][bad_srcs_flat_list]
         mag2_cut = t_st[filters[1] + '_VEGA'][bad_srcs_flat_list]
 
-        xlim = (-6, 8); ylim = (32.5, min(mag1)-1.5)
-        ylim_cut = (32.5, min(mag1_cut)-1.5)
-        bad = np.where(((mag1_cut-mag2_cut) > xlim[0]) & ((mag1_cut-mag2_cut) < xlim[1]) &
-                              (mag1_cut < ylim_cut[0]) & (mag1_cut > ylim_cut[1]))[0]
+        xlim = (-6, 8)
+        ylim = (32.5, min(mag1)-1.5)
 
-        # Set up CMD Kernel Density Estimation (KDE) scatter plot to see the density of removed sources
-        print('Setting up CMD scatter density plot for bad sources...')
-        start_time_kde = time.time()
-        xy_cut = np.vstack([(mag1_cut[bad] - mag2_cut[bad]), mag1_cut[bad]])
-        z_cut = gaussian_kde(xy_cut)(xy_cut)
-        idx_cut = z_cut.argsort()
-        x_cut, y_cut, z_cut = (mag1_cut[bad]-mag2_cut[bad])[idx_cut], mag1_cut[bad][idx_cut], z_cut[idx_cut]
-        print('t = %.2f sec.' % round((time.time() - start_time_kde), 2))
+        # limit the axes ranges to exclude 99s for other filters
+        bad = np.where(((mag1_cut - mag2_cut) > - 15.) & ((mag1_cut - mag2_cut) < 15) & (mag1_cut < 40))[0]
+
+        # CMD Kernel Density Estimation (KDE) scatter plot plotting the density of sources
+        x_cut, y_cut, z_cut = kde_scatterplot_args(mag1_cut[bad], mag2_cut[bad])
 
         # CMD of sources removed from st catalog
         ax3.scatter(x_cut, y_cut, c=z_cut, s=3, cmap='RdPu_r')
@@ -176,19 +171,12 @@ def make_cuts(catalog_in,
         ax3.set_ylabel('%s' % filters[0], fontsize=15)
         ax3.set_xlim(xlim)
         ax3.set_ylim(ylim)
-        ax3.legend(handles=[Line2D([0], [0], color='#A91864', ls='', label='Removed, N = %s' % len(mag1_cut))],
+        ax3.legend(handles=[Line2D([0], [0], color='#A91864', ls='', label='Removed, N = %s' % len(mag1_cut[bad]))],
                    loc='upper right', fontsize='small')
 
-        good = np.where(((mag1 - mag2) > xlim[0]) & ((mag1 - mag2) < xlim[1]) &
-                               (mag1 < ylim[0]) & (mag1 > ylim[1]))[0]
-        # Set up KDE for remaining sources
-        print('Setting up CMD scatter density plot for good sources...')
-        start_time_kde = time.time()
-        xy = np.vstack([(mag1[good] - mag2[good]), mag1[good]])
-        z = gaussian_kde(xy)(xy)
-        idx = z.argsort()
-        x, y, z = (mag1[good]-mag2[good])[idx], mag1[good][idx], z[idx]
-        print('t = %.2f sec.' % round((time.time() - start_time_kde), 2))
+        good = np.where(((mag1 - mag2) > -15.) & ((mag1 - mag2) < 15) & (mag1 < 40))[0]
+
+        x, y, z = kde_scatterplot_args(mag1[good], mag2[good])
 
         # CMD of remaining sources (vgst catalog)
         ax4.scatter(x, y, c=z, s=3, cmap='GnBu_r')
@@ -199,8 +187,42 @@ def make_cuts(catalog_in,
                     loc='upper right', fontsize='small')
 
         plt.savefig(catalog_out.replace('vgst.fits', '%spng' % errcutstr))
-        print('Plot saved as \'%s\'' % catalog_out.replace("vgst.fits", "%spng" % errcutstr))
+        print('Plot saved as \'%s\'' % catalog_out.split('/')[-1].replace("vgst.fits", "%spng" % errcutstr))
         plt.close()
+
+def kde_scatterplot_args(mag1, mag2):
+    """
+    Perform a Gaussian kernel density estimate of the PDF of color-mag values to enable a scatter-density CMD plot.
+
+    Parameters
+    ----------
+    mag1: astropy table column array
+        An array of mag1 values
+    mag2: astropy table column array
+        An array of mag2 values
+
+    Returns
+    -------
+    x : astropy table column
+        color values
+    y : astropy table column
+        the y-axis values
+    z : ndarray
+        The Gaussian KDE estimating the PDF of a color/mag input; Used as a sequence of numbers to be
+        mapped to colors using a colormap.
+    """
+
+    print('Setting up CMD scatter density plot...')
+    start_time_kde = time.time()
+    xy = np.vstack([(mag1 - mag2), mag1])
+    z = gaussian_kde(xy)(xy)
+
+    # sorting the points by density to ensure densest are plotted on top
+    idx = z.argsort()
+    x, y, z = (mag1 - mag2)[idx], mag1[idx], z[idx]
+    print('The KDE took %.2f sec.' % round((time.time() - start_time_kde), 2))
+
+    return x, y, z
 
 
 if __name__ == "__main__":

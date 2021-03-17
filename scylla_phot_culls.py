@@ -1,0 +1,261 @@
+# coding: utf-8
+"""
+Make quality cuts on the Scylla photometry, save new catalog, and optionally plot data spatially and in a CMD.
+Petia YMJ, Mar 2021
+"""
+import argparse
+import os
+import time
+import numpy as np
+from astropy.table import Table
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from scipy.stats import gaussian_kde
+plt.ion()
+
+
+def make_cuts(catalog_in,
+              catalog_out=None,
+              filters=['F475W', 'F814W'],
+              crowdcut=[0.3],
+              sharpcut=[0.15],
+              roundcut=[0.6],
+              errcut=None,
+              plot=False):
+    """
+    Make quality cuts on the input photometry catalog file and record them in a new catalog file.
+
+    Parameters
+    ----------
+    catalog_in : str
+        catalog file to which to apply photometry quality cuts
+    catalog_out : str
+        catalog file to which to record new photometry
+    filters : str or a list of strings
+        HST filters to which to apply quality cuts. Example: ['F336W','F475W','F814W']
+    crowdcut : float or a list of floats
+        If single value, cut is applied to all filters. If multiple values, the number of values has to match the
+        number of filters, and the cuts are applied in order based on the filter order.
+    sharpcut : float or a list of floats
+        If single value, cut is applied to all filters. If multiple values, the number of values has to match the
+        number of filters, and the cuts are applied in order based on the filter order.
+    roundcut : float or a list of floats
+        If single value, cut is applied to all filters. If multiple values, the number of values has to match the
+        number of filters, and the cuts are applied in order based on the filter order.
+    errcut : float or a list of floats
+        If single value, cut is applied to all filters. If multiple values, the number of values has to match the
+        number of filters, and the cuts are applied in order based on the filter order.
+    plot : bool
+        Generates spatial plot of the original and the trimmed catalogs, and CMDs of the removed and remaining sources.
+
+    """
+
+    field_id = catalog_in.split('.st')[0].split('/15891_')[1]
+    print('Culling catalog for %s ' % field_id)
+
+    if catalog_out is None:
+        catalog_out = catalog_in.replace('.st', '.vgst')
+
+    if errcut:
+        catalog_out = catalog_out.replace('.fits', '_errcut.fits')
+        print(catalog_out)
+        if len(errcut) < len(filters):
+            errcut = np.linspace(errcut, errcut, len(filters))
+
+    # turn single-valued into multi-valued arrays for proper referencing in the for loop below
+    if len(crowdcut) < len(filters):
+        crowdcut = np.linspace(crowdcut, crowdcut, len(filters))
+    if len(sharpcut) < len(filters):
+        sharpcut = np.linspace(sharpcut, sharpcut, len(filters))
+    if len(roundcut) < len(filters):
+        roundcut = np.linspace(roundcut, roundcut, len(filters))
+
+    # Create a copy of the catalog file to work with
+    os.system("cp " + catalog_in + " " + catalog_out)
+
+    t = Table.read(catalog_out)
+
+    # Setting FLAG=99 for crowd, sharp and round cuts
+    for i in range(len(filters)):
+        if filters[i] not in ('F475W', 'F814W'):
+            continue
+
+        inds_to_cut = np.where((t[filters[i] + '_CROWD'] > crowdcut[i]) |
+                               (t[filters[i] + '_SHARP'] * t[filters[i] + '_SHARP'] > sharpcut[i]) |
+                               (t[filters[i] + '_ROUND'] > roundcut[i]))[0]
+
+        if errcut:
+            errinds_to_cut = np.where(t[filters[i] + '_ERR'] > errcut)[0]
+            inds_to_cut = np.unique(np.concatenate((inds_to_cut, errinds_to_cut), 0))
+
+        # flag sources not passing quality cuts
+        t[filters[i] + '_FLAG'][inds_to_cut] = 99
+
+    # get all filters present in a catalog
+    filters_list = []
+    for i in range(len(t.colnames)):
+        if '_' in t.colnames[i]:
+            filt_str = t.colnames[i].split('_')[0]
+            if filt_str in filters_list:
+                continue
+            else:
+                filters_list.append(filt_str)
+
+    # Remove flux=0, flag!=0 or flag!=2 sources
+    bad_srcs_list = []
+    for i in range(len(filters_list)):
+        flux_zero = np.where(t[filters_list[i] + '_RATE'] == 0.)[0]
+        flag_not_0_or_2 = np.where((t[filters_list[i] + '_FLAG'] == 1) |
+                                        (t[filters_list[i] + '_FLAG'] == 3) |
+                                        (t[filters_list[i] + '_FLAG'] == 99))[0]
+
+        bad_srcs = np.unique(np.concatenate((flux_zero, flag_not_0_or_2), 0))
+        bad_srcs_list.append(bad_srcs)
+
+    bad_srcs_flat_list = np.unique([item for sublist in bad_srcs_list for item in sublist])
+    t.remove_rows(np.unique([item for sublist in bad_srcs_list for item in sublist]))
+    t.write(catalog_out, overwrite=True)
+
+    print('%s sources removed from catalog.' % len(bad_srcs_flat_list))
+    print('%s sources remaining in catalog.' % len(t['RA']))
+    print('New catalog: \'%s\'' % catalog_out.split('/')[-1])
+
+    if plot:
+        # read in original st catalog
+        t_st = Table.read(catalog_in)
+
+        if errcut:
+            errcutstr = '_errcut'
+        else:
+            errcutstr = ''
+
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharey='row', figsize=(8, 7))
+        fig.suptitle('Scylla %s%s (vgst catalog cuts)' % (field_id, errcutstr))
+
+        # spatial plot of st catalog
+        ax1.plot(t_st['RA'], t_st['DEC'], ',', ls='')
+        ax1.set_xlabel('RA', fontsize=15)
+        ax1.set_ylabel('DEC', fontsize=15)
+        ax1.legend(handles=[Line2D([0], [0], color='#126D94', marker='o', markersize=3, ls='',
+                            label='st catalog, N = %s' % len(t_st['RA']))],
+                   loc='upper right', fontsize='small')
+
+        # spatial plot of the culled vgst catalog
+        ax2.plot(t['RA'], t['DEC'], ',', ls='')
+        ax2.set_xlabel('RA', fontsize=15)
+        ax2.legend(handles=[Line2D([0], [0], color='#126D94', marker='o', markersize=3, ls='',
+                                   label='vgst catalog, N = %s' % len(t['RA']))],
+                   loc='upper right', fontsize='small')
+
+        mag1 = t[filters[0] + '_VEGA']
+        if len(filters) > 1:
+            mag2 = t[filters[1] + '_VEGA']
+        else:
+            mag2 = t['F475W_VEGA']
+
+        mag1_cut = t_st[filters[0] + '_VEGA'][bad_srcs_flat_list]
+        mag2_cut = t_st[filters[1] + '_VEGA'][bad_srcs_flat_list]
+
+        xlim = (-6, 8)
+        ylim = (32.5, min(mag1)-1.5)
+
+        # limit the axes ranges to exclude 99s for other filters
+        bad = np.where(((mag1_cut - mag2_cut) > - 15.) & ((mag1_cut - mag2_cut) < 15) & (mag1_cut < 40))[0]
+
+        # CMD Kernel Density Estimation (KDE) scatter plot plotting the density of sources
+        x_cut, y_cut, z_cut = kde_scatterplot_args(mag1_cut[bad], mag2_cut[bad])
+
+        # CMD of sources removed from st catalog
+        ax3.scatter(x_cut, y_cut, c=z_cut, s=3, cmap='RdPu_r')
+        ax3.set_xlabel('%s - %s' % (filters[0], filters[1]), fontsize=15)
+        ax3.set_ylabel('%s' % filters[0], fontsize=15)
+        ax3.set_xlim(xlim)
+        ax3.set_ylim(ylim)
+        ax3.legend(handles=[Line2D([0], [0], color='#A91864', ls='', label='Removed, N = %s' % len(mag1_cut[bad]))],
+                   loc='upper right', fontsize='small')
+
+        good = np.where(((mag1 - mag2) > -15.) & ((mag1 - mag2) < 15) & (mag1 < 40))[0]
+
+        x, y, z = kde_scatterplot_args(mag1[good], mag2[good])
+
+        # CMD of remaining sources (vgst catalog)
+        ax4.scatter(x, y, c=z, s=3, cmap='GnBu_r')
+        ax4.set_xlabel('%s - %s' % (filters[0], filters[1]), fontsize=15)
+        ax4.set_xlim(xlim)
+        ax4.set_ylim(ylim)
+        ax4.legend(handles=[Line2D([0], [0], color='#35C0D6', ls='', label='Kept (vgst), N = %s' % len(mag1))],
+                    loc='upper right', fontsize='small')
+
+        plt.savefig(catalog_out.replace('vgst.fits', '%spng' % errcutstr))
+        print('Plot saved as \'%s\'' % catalog_out.split('/')[-1].replace("vgst.fits", "%spng" % errcutstr))
+        plt.close()
+
+def kde_scatterplot_args(mag1, mag2):
+    """
+    Perform a Gaussian kernel density estimate of the PDF of color-mag values to enable a scatter-density CMD plot.
+
+    Parameters
+    ----------
+    mag1: astropy table column array
+        An array of mag1 values
+    mag2: astropy table column array
+        An array of mag2 values
+
+    Returns
+    -------
+    x : astropy table column
+        color values
+    y : astropy table column
+        the y-axis values
+    z : ndarray
+        The Gaussian KDE estimating the PDF of a color/mag input; Used as a sequence of numbers to be
+        mapped to colors using a colormap.
+    """
+
+    print('Setting up CMD scatter density plot...')
+    start_time_kde = time.time()
+    xy = np.vstack([(mag1 - mag2), mag1])
+    z = gaussian_kde(xy)(xy)
+
+    # sorting the points by density to ensure densest are plotted on top
+    idx = z.argsort()
+    x, y, z = (mag1 - mag2)[idx], mag1[idx], z[idx]
+    print('The KDE took %.2f sec.' % round((time.time() - start_time_kde), 2))
+
+    return x, y, z
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "catalog_in", type=str, help="File name of the input catalog",
+    )
+    parser.add_argument(
+        "--catalog_out", default=None, type=str, help="desired name of output catalog. If none given, '.st' in the"
+                                                      "input catalog is changed to '.vgst' by default"
+    )
+    parser.add_argument(
+        "--filters", default=['F475W', 'F814W'], nargs="*", type=str, help="filters to which to apply cuts. Enter as,"
+                                                                           "e.g., '--filters 'F336W' 'F475W' '."
+    )
+    parser.add_argument(
+        "--crowdcut", default=[0.3], nargs="*", type=float, help="desired crowding cut(s). Enter as, e.g., "
+                                                                 "'--crowdcut 0.15 0.2 '."
+    )
+    parser.add_argument(
+        "--sharpcut", default=[0.15], nargs="*", type=float, help="desired sharpness squared cut(s)"
+    )
+    parser.add_argument(
+        "--roundcut", default=[0.6], nargs="*", type=float, help="desired rounding cut(s)"
+    )
+    parser.add_argument(
+        "--errcut", default=None, nargs="*", type=float, help="desired error cut(s)"
+    )
+    parser.add_argument(
+        "--plot", default=False, type=bool, help="make two plots: spatial and CMD after the cuts are applied"
+    )
+    args = parser.parse_args()
+
+    make_cuts(args.catalog_in, catalog_out=args.catalog_out, filters=args.filters, crowdcut=args.crowdcut,
+              sharpcut=args.sharpcut, roundcut=args.roundcut, errcut=args.errcut, plot=args.plot)

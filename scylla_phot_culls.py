@@ -115,7 +115,6 @@ def make_cuts(
                 continue
             elif (filt_str != "RA") & (filt_str != "DEC"):
                 filters_list.append(filt_str)
-    print(filters_list)
 
     # Remove flux=0, flag!=0 or flag!=2 sources
     bad_srcs_list = []

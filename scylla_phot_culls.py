@@ -216,7 +216,6 @@ def make_cuts(
 
         # CMD Kernel Density Estimation (KDE) scatter plot plotting the density of sources
         x_cut, y_cut, z_cut = kde_scatterplot_args(mag1_cut[bad], mag2_cut[bad])
-        print("TEST", len(x_cut))
         # CMD of sources removed from st catalog
         ax3.scatter(x_cut, y_cut, c=z_cut, s=3, cmap="RdPu_r")
         ax3.set_xlabel("%s - %s" % (filters[0], filters[1]), fontsize=15)
@@ -240,7 +239,6 @@ def make_cuts(
         good = np.where(((mag1 - mag2) > -15.0) & ((mag1 - mag2) < 15) & (mag1 < 40))[0]
 
         x, y, z = kde_scatterplot_args(mag1[good], mag2[good])
-        print("TEST2", len(x))
         # CMD of remaining sources (vgst catalog)
         ax4.scatter(x, y, c=z, s=3, cmap="GnBu_r")
         ax4.set_xlabel("%s - %s" % (filters[0], filters[1]), fontsize=15)

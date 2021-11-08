@@ -55,7 +55,7 @@ def make_cuts(
         Generates spatial plot of the original and the trimmed catalogs, and CMDs of the removed and remaining sources.
     """
 
-    field_id = catalog_in.split(".st")[0].split("15891_")[1]
+    field_id = catalog_in.split(".st")[0].split("_")[1]
     print("Culling catalog for %s " % field_id)
 
     if catalog_out is None:
@@ -81,7 +81,7 @@ def make_cuts(
     t = Table.read(catalog_out)
 
     # check what the RA/DEC naming convention in the catalog is, define keywords to be used
-    if "RA" in t:
+    if "RA" in t.colnames:
         ra_key = "RA"
         dec_key = "DEC"
     else:

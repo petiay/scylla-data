@@ -55,8 +55,27 @@ def make_cuts(
         Generates spatial plot of the original and the trimmed catalogs, and CMDs of the removed and remaining sources.
     """
 
-    field_id = catalog_in.split(".st")[0].split("_")[1]
+    field_id = catalog_in.split(".st")[0].split("_")[-1]
     print("Culling catalog for %s " % field_id)
+
+    # import st catalog
+    t_st = Table.read(catalog_in)
+
+    # get all filters present in a catalog
+    filters_list = []
+    for i in range(len(t_st.colnames)):
+        if "_" in t_st.colnames[i]:
+            filt_str = t_st.colnames[i].split("_")[0]
+            if filt_str in filters_list:
+                continue
+            elif (filt_str != "RA") & (filt_str != "DEC"):
+                filters_list.append(filt_str)
+
+    # check that all the required filters are present
+    for i in range(len(filters)):
+        if filters[i] not in filters_list:
+            print("Error: Filter '{0}' missing in catalog".format(filters[i]))
+            exit()
 
     if catalog_out is None:
         catalog_out = catalog_in.replace(".st", ".vgst")
@@ -106,16 +125,6 @@ def make_cuts(
         # flag sources not passing quality cuts
         t[filters[i] + "_FLAG"][inds_to_cut] = 99
 
-    # get all filters present in a catalog
-    filters_list = []
-    for i in range(len(t.colnames)):
-        if "_" in t.colnames[i]:
-            filt_str = t.colnames[i].split("_")[0]
-            if filt_str in filters_list:
-                continue
-            elif (filt_str != "RA") & (filt_str != "DEC"):
-                filters_list.append(filt_str)
-
     # Remove flux=0, flag!=0 or flag!=2 sources
     bad_srcs_list = []
     for i in range(len(filters_list)):
@@ -145,14 +154,15 @@ def make_cuts(
 
     if plot:
         # read in original st catalog
-        t_st = Table.read(catalog_in)
+        t_st_cov = Table.read(catalog_in)
+        t_st_phot = Table.read(catalog_in)
 
         if errcut:
             errcutstr = "_errcut"
         else:
             errcutstr = ""
 
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharey="row", figsize=(8, 7))
+        fig, ((ax1, ax2, ax3, ax4), (ax5, ax6, ax7, ax8)) = plt.subplots(2, 4, sharey="row", figsize=(15, 7))
         fig.suptitle("Scylla %s%s (vgst catalog cuts)" % (field_id, errcutstr))
 
         # spatial plot of st catalog
@@ -175,11 +185,91 @@ def make_cuts(
             fontsize="small",
         )
 
+        # spatial plot of st catalog w/o flux in all bands
+        not_full_cov_list = []
+        for i in range(len(filters_list)):
+            flux_zero = np.where(t_st_cov[filters_list[i] + "_RATE"] == 0.0)[0]
+            not_full_cov_list.append(flux_zero)
+
+        not_full_cov_list = np.unique(np.concatenate(not_full_cov_list))
+        t_st_cov = t_st_cov[not_full_cov_list]
+
+        ax2.plot(t_st_cov[ra_key], t_st_cov[dec_key], ",", ls="")
+        ax2.set_xlabel("RA", fontsize=15)
+        ax2.set_ylabel("DEC", fontsize=15)
+        ax2.legend(
+            handles=[
+                Line2D(
+                    [0],
+                    [0],
+                    color="#126D94",
+                    marker="o",
+                    markersize=3,
+                    ls="",
+                    label="st catalog not in all bands, N = %s" % len(t_st_cov[ra_key]),
+                )
+            ],
+            loc="upper right",
+            fontsize="small",
+        )
+
+        # spatial plot of st catalog that don't pass photometry cuts
+
+        # Setting FLAG=99 for crowd, sharp and round cuts
+        for i in range(len(filters)):
+            if filters[i] not in ("F475W", "F814W"):
+                continue
+
+            inds_to_cut = np.where(
+                (t_st_phot[filters[i] + "_CROWD"] > crowdcut[i])
+                | (t_st_phot[filters[i] + "_SHARP"] * t_st_phot[filters[i] + "_SHARP"] > sharpcut[i])
+                | (t_st_phot[filters[i] + "_ROUND"] > roundcut[i])
+            )[0]
+
+            if errcut:
+                errinds_to_cut = np.where(t_st_phot[filters[i] + "_ERR"] > errcut)[0]
+                inds_to_cut = np.unique(np.concatenate((inds_to_cut, errinds_to_cut), 0))
+
+            # flag sources not passing quality cuts
+            t_st_phot[filters[i] + "_FLAG"][inds_to_cut] = 99
+
+      # Remove flux=0, flag!=0 or flag!=2 sources
+        not_phot_list = []
+        for i in range(len(filters_list)):
+            flag_not_0_or_2 = np.where(
+                (t_st_phot[filters_list[i] + "_FLAG"] == 1)
+                | (t_st_phot[filters_list[i] + "_FLAG"] == 3)
+                | (t_st_phot[filters_list[i] + "_FLAG"] == 99)
+            )[0]
+
+            not_phot_list.append(flag_not_0_or_2)
+
+        not_phot_list = np.unique(np.concatenate(not_phot_list))
+        t_st_phot = t_st_phot[not_phot_list]
+
+        ax3.plot(t_st_phot[ra_key], t_st_phot[dec_key], ",", ls="")
+        ax3.set_xlabel("RA", fontsize=15)
+        ax3.legend(
+            handles=[
+                Line2D(
+                    [0],
+                    [0],
+                    color="#126D94",
+                    marker="o",
+                    markersize=3,
+                    ls="",
+                    label="don't pass photometry cuts, N = %s" % len(t_st_phot[ra_key]),
+                )
+            ],
+            loc="upper right",
+            fontsize="small",
+        )
+
         # spatial plot of the culled vgst catalog
 
-        ax2.plot(t[ra_key], t[dec_key], ",", ls="")
-        ax2.set_xlabel("RA", fontsize=15)
-        ax2.legend(
+        ax4.plot(t[ra_key], t[dec_key], ",", ls="")
+        ax4.set_xlabel("RA", fontsize=15)
+        ax4.legend(
             handles=[
                 Line2D(
                     [0],
@@ -195,11 +285,15 @@ def make_cuts(
             fontsize="small",
         )
 
+
         mag1 = t[filters[0] + "_VEGA"]
         if len(filters) > 1:
             mag2 = t[filters[1] + "_VEGA"]
         else:
             mag2 = t["F475W_VEGA"]
+
+        mag1_all = t_st[filters[0] + "_VEGA"]
+        mag2_all = t_st[filters[1] + "_VEGA"]
 
         mag1_cut = t_st[filters[0] + "_VEGA"][bad_srcs_flat_list]
         mag2_cut = t_st[filters[1] + "_VEGA"][bad_srcs_flat_list]
@@ -215,21 +309,71 @@ def make_cuts(
         )[0]
 
         # CMD Kernel Density Estimation (KDE) scatter plot plotting the density of sources
-        x_cut, y_cut, z_cut = kde_scatterplot_args(mag1_cut[bad], mag2_cut[bad])
+        x_cut, y_cut, z_cut = kde_scatterplot_args(mag1_all, mag2_all)
         # CMD of sources removed from st catalog
-        ax3.scatter(x_cut, y_cut, c=z_cut, s=3, cmap="RdPu_r")
-        ax3.set_xlabel("%s - %s" % (filters[0], filters[1]), fontsize=15)
-        ax3.set_ylabel("%s" % filters[0], fontsize=15)
-        ax3.set_xlim(xlim)
-        ax3.set_ylim(ylim)
-        ax3.legend(
+        ax5.scatter(x_cut, y_cut, c=z_cut, s=3, cmap="RdPu")
+        ax5.set_xlabel("%s - %s" % (filters[0], filters[1]), fontsize=15)
+        ax5.set_ylabel("%s" % filters[0], fontsize=15)
+        ax5.set_xlim(xlim)
+        ax5.set_ylim(ylim)
+        ax5.legend(
             handles=[
                 Line2D(
                     [0],
                     [0],
                     color="#A91864",
                     ls="",
-                    label="Removed, N = %s" % len(mag1_cut),
+                    label="All sources in st catalog, N = %s" % len(mag1_all),
+                )
+            ],
+            loc="upper right",
+            fontsize="small",
+        )
+
+        mag1_cov = t_st_cov[filters[0] + "_VEGA"]
+        mag2_cov = t_st_cov[filters[1] + "_VEGA"]
+
+        # CMD Kernel Density Estimation (KDE) scatter plot plotting the density of sources
+        x_cut, y_cut, z_cut = kde_scatterplot_args(mag1_cov, mag2_cov)
+        # CMD of sources removed from st catalog
+        ax6.scatter(x_cut, y_cut, c=z_cut, s=3, cmap="RdPu")
+        ax6.set_xlabel("%s - %s" % (filters[0], filters[1]), fontsize=15)
+        ax6.set_ylabel("%s" % filters[0], fontsize=15)
+        ax6.set_xlim(xlim)
+        ax6.set_ylim(ylim)
+        ax6.legend(
+            handles=[
+                Line2D(
+                    [0],
+                    [0],
+                    color="#A91864",
+                    ls="",
+                    label="Removed, N = %s" % len(mag1_cov),
+                )
+            ],
+            loc="upper right",
+            fontsize="small",
+        )
+
+        mag1_phot = t_st_phot[filters[0] + "_VEGA"]
+        mag2_phot = t_st_phot[filters[1] + "_VEGA"]
+
+        # CMD Kernel Density Estimation (KDE) scatter plot plotting the density of sources
+        x_cut, y_cut, z_cut = kde_scatterplot_args(mag1_phot, mag2_phot)
+        # CMD of sources removed from st catalog
+        ax7.scatter(x_cut, y_cut, c=z_cut, s=3, cmap="RdPu")
+        ax7.set_xlabel("%s - %s" % (filters[0], filters[1]), fontsize=15)
+        ax7.set_ylabel("%s" % filters[0], fontsize=15)
+        ax7.set_xlim(xlim)
+        ax7.set_ylim(ylim)
+        ax7.legend(
+            handles=[
+                Line2D(
+                    [0],
+                    [0],
+                    color="#A91864",
+                    ls="",
+                    label="Removed, N = %s" % len(mag1_phot),
                 )
             ],
             loc="upper right",
@@ -240,11 +384,11 @@ def make_cuts(
 
         x, y, z = kde_scatterplot_args(mag1[good], mag2[good])
         # CMD of remaining sources (vgst catalog)
-        ax4.scatter(x, y, c=z, s=3, cmap="GnBu_r")
-        ax4.set_xlabel("%s - %s" % (filters[0], filters[1]), fontsize=15)
-        ax4.set_xlim(xlim)
-        ax4.set_ylim(ylim)
-        ax4.legend(
+        ax8.scatter(x, y, c=z, s=3, cmap="GnBu_r")
+        ax8.set_xlabel("%s - %s" % (filters[0], filters[1]), fontsize=15)
+        ax8.set_xlim(xlim)
+        ax8.set_ylim(ylim)
+        ax8.legend(
             handles=[
                 Line2D(
                     [0],
@@ -258,6 +402,7 @@ def make_cuts(
             fontsize="small",
         )
         # print(catalog_out.replace(".fits", ".png"))
+        plt.show()
         plt.savefig(catalog_out.replace(".fits", ".png"))
         print(
             "Plot saved as '%s'" % catalog_out.split("/")[-1].replace(".fits", ".png")
@@ -346,6 +491,12 @@ if __name__ == "__main__":
         "--errcut", default=None, nargs="*", type=float, help="desired error cut(s)"
     )
     parser.add_argument(
+	"--ast_apply",
+	default=False,
+	type=bool,
+	help="if True, do not remove cut sources from catalog, just flag them by introducing new flag (CUT_FLAG)"
+    )
+    parser.add_argument(
         "--plot",
         default=False,
         type=bool,
@@ -361,5 +512,6 @@ if __name__ == "__main__":
         sharpcut=args.sharpcut,
         roundcut=args.roundcut,
         errcut=args.errcut,
+     	ast_apply=args.ast_apply,
         plot=args.plot,
     )

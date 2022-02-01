@@ -58,6 +58,25 @@ def make_cuts(
     field_id = catalog_in.split(".st")[0].split("_")[1]
     print("Culling catalog for %s " % field_id)
 
+    # import st catalog
+    t_st = Table.read(catalog_in)
+
+    # get all filters present in a catalog
+    filters_list = []
+    for i in range(len(t_st.colnames)):
+        if "_" in t_st.colnames[i]:
+            filt_str = t_st.colnames[i].split("_")[0]
+            if filt_str in filters_list:
+                continue
+            elif (filt_str != "RA") & (filt_str != "DEC"):
+                filters_list.append(filt_str)
+
+    # check that all the required filters are present
+    for i in range(len(filters)):
+        if filters[i] not in filters_list:
+            print("Error: Filter '{0}' missing in catalog".format(filters[i]))
+            exit()
+
     if catalog_out is None:
         catalog_out = catalog_in.replace(".st", ".vgst")
 
@@ -105,16 +124,6 @@ def make_cuts(
 
         # flag sources not passing quality cuts
         t[filters[i] + "_FLAG"][inds_to_cut] = 99
-
-    # get all filters present in a catalog
-    filters_list = []
-    for i in range(len(t.colnames)):
-        if "_" in t.colnames[i]:
-            filt_str = t.colnames[i].split("_")[0]
-            if filt_str in filters_list:
-                continue
-            elif (filt_str != "RA") & (filt_str != "DEC"):
-                filters_list.append(filt_str)
 
     # Remove flux=0, flag!=0 or flag!=2 sources
     bad_srcs_list = []

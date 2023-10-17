@@ -107,14 +107,7 @@ def make_cuts(
         t[filters[i] + "_FLAG"][inds_to_cut] = 99
 
     # get all filters present in a catalog
-    filters_list = []
-    for i in range(len(t.colnames)):
-        if "_" in t.colnames[i]:
-            filt_str = t.colnames[i].split("_")[0]
-            if filt_str in filters_list:
-                continue
-            elif (filt_str != "RA") & (filt_str != "DEC"):
-                filters_list.append(filt_str)
+    filters_list = [x.split('_')[0] for x in t.colnames if "VEGA" in x]
 
     # Remove flux=0, flag!=0 or flag!=2 sources
     bad_srcs_list = []
